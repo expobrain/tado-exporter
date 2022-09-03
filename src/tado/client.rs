@@ -1,3 +1,4 @@
+use lazy_static::lazy_static;
 use log::{error, info};
 use reqwest;
 use std::vec::Vec;
@@ -8,14 +9,13 @@ use super::model::{
 
 const AUTH_URL: &str = "https://auth.tado.com/oauth/token";
 
-macro_rules! format_base_url {
-    () => {
-        "https://my.tado.com{endpoint}"
-    };
+lazy_static! {
+    pub static ref BASE_URL: reqwest::Url = "https://my.tado.com/".parse().unwrap();
 }
 
 pub struct Client {
     http_client: reqwest::Client,
+    base_url: reqwest::Url,
     username: String,
     password: String,
     client_secret: String,
@@ -25,8 +25,18 @@ pub struct Client {
 
 impl Client {
     pub fn new(username: String, password: String, client_secret: String) -> Client {
+        Client::with_base_url(BASE_URL.clone(), username, password, client_secret)
+    }
+
+    fn with_base_url(
+        base_url: reqwest::Url,
+        username: String,
+        password: String,
+        client_secret: String,
+    ) -> Client {
         Client {
             http_client: reqwest::Client::new(),
+            base_url,
             username,
             password,
             client_secret,
@@ -55,16 +65,16 @@ impl Client {
         resp.json::<AuthApiResponse>().await
     }
 
-    async fn get(&self, url: String) -> Result<reqwest::Response, reqwest::Error> {
+    async fn get(&self, url: reqwest::Url) -> Result<reqwest::Response, reqwest::Error> {
         self.http_client
-            .get(reqwest::Url::parse(url.as_str()).unwrap())
+            .get(url)
             .header("Authorization", format!("Bearer: {}", self.access_token))
             .send()
             .await
     }
 
     async fn me(&self) -> Result<MeApiResponse, reqwest::Error> {
-        let url = format!(format_base_url!(), endpoint = "/api/v2/me");
+        let url = self.base_url.join("/api/v2/me").unwrap();
         let resp = self.get(url).await?;
 
         resp.json::<MeApiResponse>().await
@@ -72,7 +82,7 @@ impl Client {
 
     async fn zones(&mut self) -> Result<Vec<ZonesApiResponse>, reqwest::Error> {
         let endpoint = format!("/api/v2/homes/{}/zones", self.home_id);
-        let url = format!(format_base_url!(), endpoint = endpoint);
+        let url = self.base_url.join(&endpoint).unwrap();
 
         let resp = self.get(url).await?;
 
@@ -81,7 +91,7 @@ impl Client {
 
     async fn zone_state(&mut self, zone_id: i32) -> Result<ZoneStateApiResponse, reqwest::Error> {
         let endpoint = format!("/api/v2/homes/{}/zones/{}/state", self.home_id, zone_id);
-        let url = format!(format_base_url!(), endpoint = endpoint);
+        let url = self.base_url.join(&endpoint).unwrap();
 
         let resp = self.get(url).await?;
 
@@ -141,5 +151,39 @@ impl Client {
         }
 
         response
+    }
+}
+
+#[cfg(test)]
+mod tests {
+    use super::*;
+
+    #[test]
+    fn test_new() {
+        let client = Client::new(
+            "username".to_string(),
+            "password".to_string(),
+            "client_secret".to_string(),
+        );
+
+        assert_eq!(client.username, "username");
+        assert_eq!(client.password, "password");
+        assert_eq!(client.client_secret, "client_secret");
+        assert_eq!(client.base_url, *BASE_URL);
+    }
+
+    #[test]
+    fn test_with_base_url() {
+        let client = Client::with_base_url(
+            "https://example.com".parse().unwrap(),
+            "username".to_string(),
+            "password".to_string(),
+            "client_secret".to_string(),
+        );
+
+        assert_eq!(client.username, "username");
+        assert_eq!(client.password, "password");
+        assert_eq!(client.client_secret, "client_secret");
+        assert_eq!(client.base_url, "https://example.com".parse().unwrap());
     }
 }
